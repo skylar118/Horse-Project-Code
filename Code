@@ -1,0 +1,168 @@
+sampsize = 1000            # 200 survey respondents
+levels.design= c(2,2,2,2) # 4 vars, each var has 2 levels
+set.seed(123)
+
+library(AlgDesign)
+full.design <- gen.factorial(levels.design,factors="all") # generate a full factorial design
+# factor="all" indicates that all of the variables are factors (i.e., categorical variables)
+# full.design contains all the combinations: 2x2x2x2=16 combinations of attributes
+nprofiles = nrow(full.design) # total number of all possible profiles
+full.design.m = as.matrix(full.design)
+full.design.n = as.numeric(full.design.m)
+design.mat = matrix(full.design.n, nprofiles)-1   
+# -1 means every element in the matrix -1 so that we have 0/1 dummies
+design.mat 
+
+filenm = "MKT412R - Final Analysis Case Data"
+load(paste(filenm,".Rdata",sep=""))
+ls()
+
+# aggregate regression that pools over all respondents to find avg preferences 
+summary(lm(ratings~desmat))
+
+# estimate regression for each individual separately
+desmatf = cbind(rep(1,nrow(desmat)),desmat)
+
+# construct an empty matrix to store part-worth of each individual
+partworths = matrix(nrow=sampsize,ncol=ncol(desmatf))
+
+# for each individual run the regression
+# save the individual coefficients to the corresponding cells in partworth matrix
+for(i in 1:sampsize){ 
+    partworths[i,]=lm(ratings~desmat,subset=ID==i)$coef
+}
+colnames(partworths) = c("Intercept","Price","Height","Motion","Style")
+partworths
+
+###### CLUSTER #####
+
+install.packages("cluster")
+install.packages("fpc")
+library(cluster) 
+library(fpc)
+library(cluster)
+library(factoextra)
+
+set.seed(123456)   # set random number seed before doing cluster analysis
+toclust = partworths
+
+wss <- (nrow(toclust)-1)*sum(apply(toclust,2,var))
+for (i in 2:15) wss[i] <- sum(kmeans(toclust, 
+                                     centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+
+##use pamk() to determine the optimal number of clusters 
+pm1 = pamk(toclust,scaling=TRUE)
+pm1$nc #this indicates the optimal number of clusters based on specific criterion
+##that criterion is the lowest average silhoutte score (a measure of quality of clustering)
+
+km1 = kmeans(toclust,3,iter.max = 20, nstart=2)
+p1 <- fviz_cluster(km1, geom = "point", data = toclust) + ggtitle("k = 3")
+rscale = function(x){(x-min(x))/(max(x)-min(x));}
+km1m = aggregate(toclust,by=list(km1$cluster),FUN=mean)
+km1ms = apply(km1m[,2:ncol(km1m)],2,rscale); 
+par(mar=c(8.1,4.1,4.1,2.1)); #setting margins to give room for x axis labels
+matplot(t(km1ms),col=c(1,4,2),ylab="Mean Value (Range Normalized)",xaxt="n")
+axis(side=1,at=1:19,labels=names(toclust),las=2); 
+
+percsize = paste(1:3," = ",format(km1$size/sum(km1$size)*100,digits=2),"%",sep="")
+pie(km1$size,labels=percsize)
+
+clusplot(toclust, km1$cluster, color=TRUE, shade=TRUE, 
+         labels=2, lines=0);
+
+km1$centers
+str(km1)
+# segment 1: price sensitive, prefer 26, bouncing, do not like glamous.
+# segment 2: less price sensitive, prefer 18, rocking, no preference on style
+# segment 3: least price sensitive, prefer 26 much, rocking, really like glarrious.
+
+#################### priori segment ###############
+# by apriori segment age
+summary(lm(ratings~desmat*ageD))
+
+# for segment which ageD==0(old): price, height matters
+# for segment ageD==1(young): height and motion matters, and they care more on height.
+
+summary(lm(ratings~desmat*genderD))
+
+summary(lm(ratings~desmat,subset=genderD==1)) # female
+summary(lm(ratings~desmat,subset=genderD==0)) # male
+
+female = genderD[which(genderD==1)]
+length(female) 
+male = genderD[which(genderD==0)]
+length(male) 
+
+4704/16 # 294
+11296/16 #706
+
+# female: less price sensitive, like 26 more, prefer rocking, glamorous.
+# male: more price sensitive, like 18 more, prefer bouncing, racing.
+
+
+###### Creation of Fitted and Actual Ratings ####
+partworths.full = matrix(rep(partworths,each=16),ncol=5)
+head(partworths.full, 30)
+
+pratings = rowSums(desmatf*partworths.full) # intercept+x1*beta1+x2*beta2+...
+finalratings = ifelse(is.na(ratings),pratings,ratings)
+
+############## part5: Market Simulation ############
+# a scenario is a set of products, each with a set of levels.
+# create a vector with the indexes for the product profiles from the
+
+# Suppose our competitor offers product 1 ($45, 18", Bouncing, Racing Horse)
+# We offer product 9, ($45, 18", Bouncing, Glamour Horse)
+scen0 = c(14,6,8)
+scen1 = c(16,6,3,7)
+scen2 = c(16,1,7)
+scen3 = c(1,7)
+scen4 = c(3,16,7)
+scen5 = c(16,7)
+
+# tranform final ratings into matrix
+simDecInput = matrix(finalratings,nrow=nprofiles) # 16 rows as profiles and samplesize as columns
+i
+
+# inputmat is the ratings matrix with rows as profiles and cols as ratings
+# scen is the list of products in the market for the scenario (these are rows in inputmat)
+simDec = function(inputmat,scen){
+    inmkt = inputmat[scen,]
+    max = apply(inmkt,2,max)
+    firstChoices = (inmkt==rep(max, each=length(scen)))
+    shares = firstChoices/rep(colSums(firstChoices),each=length(scen))
+    rowMeans(shares)
+}
+
+inputmat = simDecInput[1:16, 1:1000]   # select first 5 products and 8 individuals
+
+scen = c(1,16)   # select 1st and 3rd product profiles
+inmkt = inputmat[scen,]
+
+max = apply(inmkt, 2, max)  # for each column(individual) in inmkt, get the highest rating
+print(max, digits = 4)
+firstChoices = (inmkt==rep(max, each=length(scen))) # returns TRUE if the product is first choice
+firstChoices
+rep(max, each=length(scen))  # repeats max vector in order to be conformable with inmkt matrix
+inmkt==rep(max,each=length(scen)) # this compares matrix inmkt and vector created by rep().
+shares = firstChoices/rep(colSums(firstChoices),each=length(scen)) 
+# this code converts the TRUE/FALSE in the "firstChoices" matrix into 1 and 0 respectively.
+shares
+rowMeans(shares)
+
+simDec0 = simDec(simDecInput,scen0)
+simDec0
+simDec1 = simDec(simDecInput,scen1)
+simDec1
+simDec2 = simDec(simDecInput,scen2)
+simDec2
+simDec3 = simDec(simDecInput,scen3)
+simDec3
+simDec4 = simDec(simDecInput,scen4)
+simDec4
+simDec5 = simDec(simDecInput,scen5)
+simDec5
+
+
